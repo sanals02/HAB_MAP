@@ -121,6 +121,7 @@
   // --- Receive data and selection from Grafana ---
   window.addEventListener("message", (event) => {
     const msg = event.data;
+    console.log("event data got",msg)
     if (!msg) return;
 
     // Initial/updated dataset
