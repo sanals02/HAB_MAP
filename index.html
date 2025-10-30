@@ -65,11 +65,10 @@
 
   // === Marker handling ===
   let markers = [];
-  // <CHANGE> Changed from single selectedMarker to Set of selectedMarkers for multiple selections
-  let selectedMarkers = new Set();
+  let selectedMarker = null;
   const nameToMarker = new Map();
   const nameToData = new Map();
-  let pendingSelections = [];
+  let pendingSelection = null;
 
   function resetMarkerStyle(marker) {
     marker.setStyle({
@@ -97,40 +96,25 @@
     </div>`;
   }
 
-  // <CHANGE> Updated to handle multiple region names
-  function highlightRegionsByNames(regionNames, openPopup = true) {
-    if (!regionNames || regionNames.length === 0) return;
+  function highlightRegionByName(regionName, openPopup = true) {
+    if (!regionName) return;
+    const marker = nameToMarker.get(regionName);
+    if (!marker) {
+      // Defer until markers arrive
+      pendingSelection = regionName;
+      return;
+    }
 
-    // Reset all previously selected markers
-    selectedMarkers.forEach((marker) => {
-      resetMarkerStyle(marker);
-    });
-    selectedMarkers.clear();
+    if (selectedMarker && selectedMarker !== marker) {
+      resetMarkerStyle(selectedMarker);
+    }
+    highlightMarker(marker);
+    selectedMarker = marker;
 
-    // Highlight all new selected regions
-    regionNames.forEach((regionName) => {
-      if (!regionName) return;
-      
-      const marker = nameToMarker.get(regionName);
-      if (!marker) {
-        // Defer until markers arrive
-        pendingSelections.push(regionName);
-        return;
-      }
-
-      highlightMarker(marker);
-      selectedMarkers.add(marker);
-
-      if (openPopup) {
-        const data = nameToData.get(regionName);
-        marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: false });
-      }
-    });
-
-    // Open popup for the first selected marker
-    if (openPopup && selectedMarkers.size > 0) {
-      const firstMarker = Array.from(selectedMarkers)[0];
-      firstMarker.openPopup();
+    if (openPopup) {
+      const data = nameToData.get(regionName);
+      marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: true });
+      marker.openPopup();
     }
   }
 
@@ -145,7 +129,6 @@
       markers = [];
       nameToMarker.clear();
       nameToData.clear();
-      selectedMarkers.clear();
 
       const regionData = msg.data || [];
       if (!regionData.length) return;
@@ -162,15 +145,11 @@
           .addTo(map)
           .bindPopup(buildPopupHtml(regionNameDecoded, r))
           .on("click", () => {
-            // <CHANGE> When user clicks a marker, send single selection back to Grafana
-            // Reset all selections and highlight only the clicked marker
-            selectedMarkers.forEach((m) => {
-              resetMarkerStyle(m);
-            });
-            selectedMarkers.clear();
-
+            if (selectedMarker) {
+              resetMarkerStyle(selectedMarker);
+            }
             highlightMarker(marker);
-            selectedMarkers.add(marker);
+            selectedMarker = marker;
 
             window.parent.postMessage(
               {
@@ -191,28 +170,20 @@
         map.fitBounds(bounds, { padding: [40, 40] });
       }
 
-      // <CHANGE> If selections arrived earlier, apply now
-      if (pendingSelections.length > 0) {
-        const names = pendingSelections;
-        pendingSelections = [];
-        highlightRegionsByNames(names, true);
+      // If a selection arrived earlier, apply now
+      if (pendingSelection) {
+        const name = pendingSelection;
+        pendingSelection = null;
+        highlightRegionByName(name, true);
       }
 
       return;
     }
 
-    // <CHANGE> Programmatic selection from Grafana - now handles both single and multiple selections
+    // Programmatic selection from Grafana (e.g., dropdown)
     if (msg.type === "selectRegion") {
-      // msg.region can be a single string or an array of strings
-      let regionNames = [];
-      
-      if (Array.isArray(msg.region)) {
-        regionNames = msg.region;
-      } else if (typeof msg.region === "string") {
-        regionNames = [msg.region];
-      }
-
-      highlightRegionsByNames(regionNames, true);
+      // msg.region is expected to be plain text
+      highlightRegionByName(msg.region, true);
       return;
     }
   });
