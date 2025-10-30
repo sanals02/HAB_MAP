@@ -4,38 +4,27 @@
 <meta charset="UTF-8" />
 <title>خريطة حفر الباطن عالية الدقة</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <!-- Leaflet -->
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
 <style>
-  html, body {
-    height: 100%;
-    margin: 0;
-    background: #000;
-    font-family: "TheSansArabic", sans-serif;
-  }
-  #map {
-    height: 100%;
-    width: 100%;
-  }
-  .leaflet-popup-content {
+  html, body { height: 100%; margin: 0; background: #000; font-family: "TheSansArabic", sans-serif; }
+  #map { height: 100%; width: 100%; }
+  .leaflet-popup-content { text-align: center; direction: rtl; font-size: 14px; }
+  .selected-tooltip {
+    background: rgba(0,0,0,0.85);
+    color: #fff;
+    border: 1px solid #ff0;
+    padding: 6px 8px;
+    border-radius: 4px;
     text-align: center;
     direction: rtl;
-    font-size: 14px;
+    font-size: 13px;
   }
 </style>
 </head>
-
 <body>
 <div id="map"></div>
-
 <script>
-  // === Initialize map centered on Hafar Al-Batin ===
   const map = L.map("map", {
     center: [28.4322, 45.9708],
     zoom: 13,
@@ -43,162 +32,105 @@
     maxZoom: 22,
     zoomControl: true,
   });
-
-  // === ESRI World Imagery (High-Resolution Satellite) ===
-  const esriSatellite = L.tileLayer(
+  L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
-      maxZoom: 22,
-      attribution: "© Esri, Maxar, Earthstar Geographics",
-    }
+    { maxZoom: 22, attribution: "© Esri, Maxar, Earthstar Geographics" }
   ).addTo(map);
-
-  // === ESRI Label Layer (shows street names, places, buildings) ===
-  const esriLabels = L.tileLayer(
+  L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-    {
-      maxZoom: 22,
-      opacity: 1,
-      attribution: "© Esri",
-    }
+    { maxZoom: 22, attribution: "© Esri" }
   ).addTo(map);
 
-  // === Marker handling ===
   let markers = [];
-  let selectedMarker = null;
   const nameToMarker = new Map();
   const nameToData = new Map();
-  let pendingSelection = null;
+  let multiSelection = new Set();
+  let pendingMultiSelection = null;
 
-  function resetMarkerStyle(marker) {
-    marker.setStyle({
-      color: "#ff0000",
-      fillColor: "#ff0000",
-      radius: 8,
-    });
+  function styleDefault(marker) {
+    marker.setStyle({ color: "#ff0000", fillColor: "#ff0000", radius: 8 });
+    if (marker._tooltip) marker.closeTooltip();
   }
-
-  function highlightMarker(marker) {
-    marker.setStyle({
-      color: "#ffff00",
-      fillColor: "#ffff00",
-      radius: 11,
-    });
+  function styleSelected(marker, infoHtml) {
+    marker.setStyle({ color: "#ffff00", fillColor: "#ffff00", radius: 11 });
+    marker.bindTooltip(infoHtml, { permanent: true, direction: "top", className: "selected-tooltip" }).openTooltip();
   }
-
-  function clearSelection() {
-    if (selectedMarker) {
-      resetMarkerStyle(selectedMarker);
-      if (typeof selectedMarker.closePopup === 'function') {
-        selectedMarker.closePopup();
-      }
-      selectedMarker = null;
-    }
-  }
-
-  function buildPopupHtml(regionName, data) {
-    const access = data?.access ?? "-";
-    const satisfaction = data?.satisfaction ?? "-";
+  function buildInfoHtml(name, data) {
     return `<div>
-      <b>${regionName}</b><br/>
-      امكانية الوصول: ${access}<br/>
-      رضا السكان: ${satisfaction}
+      <b>${name}</b><br/>
+      امكانية الوصول: ${data?.access ?? "-"}<br/>
+      رضا السكان: ${data?.satisfaction ?? "-"}
     </div>`;
   }
-
-  function highlightRegionByName(regionName, openPopup = true) {
-    if (!regionName) return;
-    const marker = nameToMarker.get(regionName);
-    if (!marker) {
-      pendingSelection = regionName; // defer until markers are ready
-      return;
-    }
-
-    if (selectedMarker && selectedMarker !== marker) {
-      resetMarkerStyle(selectedMarker);
-    }
-    highlightMarker(marker);
-    selectedMarker = marker;
-
-    if (openPopup) {
-      const data = nameToData.get(regionName);
-      marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: true });
-      marker.openPopup();
-    }
+  function updateAllVisuals() {
+    nameToMarker.forEach((marker, name) => {
+      if (multiSelection.has(name)) {
+        styleSelected(marker, buildInfoHtml(name, nameToData.get(name)));
+      } else {
+        styleDefault(marker);
+      }
+    });
+  }
+  function clearAll() {
+    multiSelection.clear();
+    updateAllVisuals();
+  }
+  function selectRegions(arr) {
+    multiSelection = new Set(arr.filter(Boolean).map(v => v.trim()));
+    updateAllVisuals();
   }
 
-  // --- Receive data and selection from Grafana ---
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (!msg) return;
-
-    // Initial/updated dataset
     if (msg.type === "habData") {
-      markers.forEach((m) => map.removeLayer(m));
+      markers.forEach(m => map.removeLayer(m));
       markers = [];
       nameToMarker.clear();
       nameToData.clear();
-      clearSelection();
-      pendingSelection = null;
-
+      clearAll();
+      pendingMultiSelection = null;
       const regionData = msg.data || [];
       if (!regionData.length) return;
-
       regionData.forEach((r) => {
-        const regionNameDecoded = decodeURIComponent(r.name);
+        const name = decodeURIComponent(r.name);
         const marker = L.circleMarker([r.lat, r.long], {
-          radius: 8,
-          color: "#ff0000",
-          fillColor: "#ff0000",
-          fillOpacity: 0.9,
-          weight: 1.5,
-        })
-          .addTo(map)
-          .bindPopup(buildPopupHtml(regionNameDecoded, r))
-          .on("click", () => {
-            if (selectedMarker) {
-              resetMarkerStyle(selectedMarker);
-            }
-            highlightMarker(marker);
-            selectedMarker = marker;
-
-            window.parent.postMessage(
-              {
-                type: "mapClick",
-                region: regionNameDecoded, // plain text
-              },
-              "*"
-            );
-          });
-
-        nameToMarker.set(regionNameDecoded, marker);
-        nameToData.set(regionNameDecoded, r);
+          radius: 8, color: "#ff0000", fillColor: "#ff0000", fillOpacity: 0.9, weight: 1.5,
+        }).addTo(map)
+        .bindPopup(buildInfoHtml(name, r))
+        .on("click", () => {
+          window.parent.postMessage({ type: "mapClick", region: name }, "*");
+        });
+        nameToMarker.set(name, marker);
+        nameToData.set(name, r);
         markers.push(marker);
       });
-
       if (regionData.length > 1) {
         const bounds = L.latLngBounds(regionData.map((r) => [r.lat, r.long]));
         map.fitBounds(bounds, { padding: [40, 40] });
       }
-
-      // If a selection arrived earlier, apply now
-      if (pendingSelection) {
-        const name = pendingSelection;
-        pendingSelection = null;
-        highlightRegionByName(name, true);
+      // Handle deferred selection
+      if (pendingMultiSelection) selectRegions(pendingMultiSelection);
+      return;
+    }
+    if (msg.type === "selectRegions") {
+      // multi-select: expect msg.regions as array
+      if (!Array.isArray(msg.regions)) {
+        pendingMultiSelection = [msg.regions].filter(Boolean);
+        return;
       }
-
+      if (!nameToMarker.size) { pendingMultiSelection = msg.regions.slice(); return; }
+      selectRegions(msg.regions);
       return;
     }
-
-    // Programmatic selection from Grafana (e.g., dropdown)
     if (msg.type === "selectRegion") {
-      highlightRegionByName(msg.region, true);
+      // single-select API for compatibility: mark only that point
+      if (!msg.region || !nameToMarker.size) { pendingMultiSelection = [msg.region]; return; }
+      selectRegions([msg.region]);
       return;
     }
-
     if (msg.type === "clearSelection") {
-      clearSelection();
+      clearAll();
       return;
     }
   });
