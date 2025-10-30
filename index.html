@@ -1,192 +1,196 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html>
 <head>
-<meta charset="UTF-8" />
-<title>خريطة حفر الباطن عالية الدقة</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-  <!-- Leaflet -->
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-<style>
-  html, body {
-    height: 100%;
-    margin: 0;
-    background: #000;
-    font-family: "TheSansArabic", sans-serif;
-  }
-  #map {
-    height: 100%;
-    width: 100%;
-  }
-  .leaflet-popup-content {
-    text-align: center;
-    direction: rtl;
-    font-size: 14px;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <title>خريطة حفر الباطن عالية الدقة</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #000;
+      font-family: "TheSansArabic", sans-serif;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+    .leaflet-popup-content {
+      text-align: center;
+      direction: rtl;
+      font-size: 14px;
+    }
+  </style>
 </head>
-
 <body>
-<div id="map"></div>
+  <div id="map"></div>
 
-<script>
-  // === Initialize map centered on Hafar Al-Batin ===
-  const map = L.map("map", {
-    center: [28.4322, 45.9708],
-    zoom: 13,
-    minZoom: 10,
-    maxZoom: 22,
-    zoomControl: true,
-  });
-
-  // === ESRI World Imagery (High-Resolution Satellite) ===
-  const esriSatellite = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    {
+  <script>
+    // === Initialize map centered on Hafar Al-Batin ===
+    const map = L.map("map", {
+      center: [28.4322, 45.9708],
+      zoom: 13,
+      minZoom: 10,
       maxZoom: 22,
-      attribution: "© Esri, Maxar, Earthstar Geographics",
-    }
-  ).addTo(map);
-
-  // === ESRI Label Layer (shows street names, places, buildings) ===
-  const esriLabels = L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-    {
-      maxZoom: 22,
-      opacity: 1,
-      attribution: "© Esri",
-    }
-  ).addTo(map);
-
-  // === Marker handling ===
-  let markers = [];
-  let selectedMarker = null;
-  const nameToMarker = new Map();
-  const nameToData = new Map();
-  let pendingSelection = null;
-
-  function resetMarkerStyle(marker) {
-    marker.setStyle({
-      color: "#ff0000",
-      fillColor: "#ff0000",
-      radius: 8,
+      zoomControl: true,
     });
-  }
 
-  function highlightMarker(marker) {
-    marker.setStyle({
-      color: "#ffff00",
-      fillColor: "#ffff00",
-      radius: 11,
-    });
-  }
+    // === ESRI World Imagery (High-Resolution Satellite) ===
+    const esriSatellite = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 22,
+        attribution: "© Esri, Maxar, Earthstar Geographics",
+      }
+    ).addTo(map);
 
-  function buildPopupHtml(regionName, data) {
-    const access = data?.access ?? "-";
-    const satisfaction = data?.satisfaction ?? "-";
-    return `<div>
-      <b>${regionName}</b><br/>
-      امكانية الوصول: ${access}<br/>
-      رضا السكان: ${satisfaction}
-    </div>`;
-  }
+    // === ESRI Label Layer ===
+    const esriLabels = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+      {
+        maxZoom: 22,
+        opacity: 1,
+        attribution: "© Esri",
+      }
+    ).addTo(map);
 
-  function highlightRegionByName(regionName, openPopup = true) {
-    if (!regionName) return;
-    const marker = nameToMarker.get(regionName);
-    if (!marker) {
-      // Defer until markers arrive
-      pendingSelection = regionName;
-      return;
-    }
+    // === Marker handling ===
+    let markers = [];
+    let selectedMarkers = new Set(); // <CHANGE> Use Set to track multiple selected markers
+    const nameToMarker = new Map();
+    const nameToData = new Map();
+    let pendingSelection = null;
 
-    if (selectedMarker && selectedMarker !== marker) {
-      resetMarkerStyle(selectedMarker);
-    }
-    highlightMarker(marker);
-    selectedMarker = marker;
-
-    if (openPopup) {
-      const data = nameToData.get(regionName);
-      marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: true });
-      marker.openPopup();
-    }
-  }
-
-  // --- Receive data and selection from Grafana ---
-  window.addEventListener("message", (event) => {
-    const msg = event.data;
-    if (!msg) return;
-
-    // Initial/updated dataset
-    if (msg.type === "habData") {
-      markers.forEach((m) => map.removeLayer(m));
-      markers = [];
-      nameToMarker.clear();
-      nameToData.clear();
-
-      const regionData = msg.data || [];
-      if (!regionData.length) return;
-
-      regionData.forEach((r) => {
-        const regionNameDecoded = decodeURIComponent(r.name);
-        const marker = L.circleMarker([r.lat, r.long], {
-          radius: 8,
-          color: "#ff0000",
-          fillColor: "#ff0000",
-          fillOpacity: 0.9,
-          weight: 1.5,
-        })
-          .addTo(map)
-          .bindPopup(buildPopupHtml(regionNameDecoded, r))
-          .on("click", () => {
-            if (selectedMarker) {
-              resetMarkerStyle(selectedMarker);
-            }
-            highlightMarker(marker);
-            selectedMarker = marker;
-
-            window.parent.postMessage(
-              {
-                type: "mapClick",
-                region: regionNameDecoded, // plain text
-              },
-              "*"
-            );
-          });
-
-        nameToMarker.set(regionNameDecoded, marker);
-        nameToData.set(regionNameDecoded, r);
-        markers.push(marker);
+    function resetMarkerStyle(marker) {
+      marker.setStyle({
+        color: "#ff0000",
+        fillColor: "#ff0000",
+        radius: 8,
       });
-
-      if (regionData.length > 1) {
-        const bounds = L.latLngBounds(regionData.map((r) => [r.lat, r.long]));
-        map.fitBounds(bounds, { padding: [40, 40] });
-      }
-
-      // If a selection arrived earlier, apply now
-      if (pendingSelection) {
-        const name = pendingSelection;
-        pendingSelection = null;
-        highlightRegionByName(name, true);
-      }
-
-      return;
     }
 
-    // Programmatic selection from Grafana (e.g., dropdown)
-    if (msg.type === "selectRegion") {
-      // msg.region is expected to be plain text
-      highlightRegionByName(msg.region, true);
-      return;
+    function highlightMarker(marker) {
+      marker.setStyle({
+        color: "#ffff00",
+        fillColor: "#ffff00",
+        radius: 11,
+      });
     }
-  });
-</script>
+
+    function buildPopupHtml(regionName, data) {
+      const access = data?.access ?? "-";
+      const satisfaction = data?.satisfaction ?? "-";
+      return `
+        <div>
+          <strong>${regionName}</strong><br/>
+          امكانية الوصول: ${access}<br/>
+          رضا السكان: ${satisfaction}
+        </div>
+      `;
+    }
+
+    // <CHANGE> New function to handle multiple selected regions
+    function highlightRegionsByNames(regionNames, openPopup = true) {
+      if (!regionNames) return;
+
+      // Ensure regionNames is an array
+      const names = Array.isArray(regionNames) ? regionNames : [regionNames];
+
+      // Reset all previously selected markers
+      selectedMarkers.forEach((marker) => {
+        resetMarkerStyle(marker);
+        marker.closePopup();
+      });
+      selectedMarkers.clear();
+
+      // Highlight all new selected markers
+      names.forEach((regionName) => {
+        if (!regionName) return;
+
+        const marker = nameToMarker.get(regionName);
+        if (!marker) {
+          // Defer until markers arrive
+          pendingSelection = names;
+          return;
+        }
+
+        highlightMarker(marker);
+        selectedMarkers.add(marker);
+
+        if (openPopup) {
+          const data = nameToData.get(regionName);
+          marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: false });
+          marker.openPopup();
+        }
+      });
+    }
+
+    // --- Receive data and selection from Grafana ---
+    window.addEventListener("message", (event) => {
+      const msg = event.data;
+      if (!msg) return;
+
+      // Initial/updated dataset
+      if (msg.type === "habData") {
+        markers.forEach((m) => map.removeLayer(m));
+        markers = [];
+        nameToMarker.clear();
+        nameToData.clear();
+        selectedMarkers.clear();
+
+        const regionData = msg.data || [];
+        if (!regionData.length) return;
+
+        regionData.forEach((r) => {
+          const regionNameDecoded = decodeURIComponent(r.name);
+          const marker = L.circleMarker([r.lat, r.long], {
+            radius: 8,
+            color: "#ff0000",
+            fillColor: "#ff0000",
+            fillOpacity: 0.9,
+            weight: 1.5,
+          })
+            .addTo(map)
+            .bindPopup(buildPopupHtml(regionNameDecoded, r))
+            .on("click", () => {
+              // <CHANGE> When marker is clicked, send single selection back to Grafana
+              // Don't modify selectedMarkers here - let Grafana handle the selection
+              window.parent.postMessage(
+                {
+                  type: "mapClick",
+                  region: regionNameDecoded,
+                },
+                "*"
+              );
+            });
+
+          nameToMarker.set(regionNameDecoded, marker);
+          nameToData.set(regionNameDecoded, r);
+          markers.push(marker);
+        });
+
+        if (regionData.length > 1) {
+          const bounds = L.latLngBounds(regionData.map((r) => [r.lat, r.long]));
+          map.fitBounds(bounds, { padding: [40, 40] });
+        }
+
+        // If a selection arrived earlier, apply now
+        if (pendingSelection) {
+          const names = pendingSelection;
+          pendingSelection = null;
+          highlightRegionsByNames(names, true);
+        }
+        return;
+      }
+
+      // <CHANGE> Programmatic selection from Grafana (supports both single and multiple)
+      if (msg.type === "selectRegion") {
+        // msg.region can be a string or array of strings
+        highlightRegionsByNames(msg.region, true);
+        return;
+      }
+    });
+  </script>
 </body>
 </html>
