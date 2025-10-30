@@ -5,7 +5,11 @@
 <title>خريطة حفر الباطن عالية الدقة</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Leaflet -->
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
@@ -24,16 +28,6 @@
     direction: rtl;
     font-size: 14px;
   }
-  .selected-tooltip {
-    background: rgba(0,0,0,0.85);
-    color: #fff;
-    border: 1px solid #ff0;
-    padding: 6px 8px;
-    border-radius: 4px;
-    text-align: center;
-    direction: rtl;
-    font-size: 13px;
-  }
 </style>
 </head>
 
@@ -41,6 +35,7 @@
 <div id="map"></div>
 
 <script>
+  // === Initialize map centered on Hafar Al-Batin ===
   const map = L.map("map", {
     center: [28.4322, 45.9708],
     zoom: 13,
@@ -49,32 +44,59 @@
     zoomControl: true,
   });
 
-  L.tileLayer(
+  // === ESRI World Imagery (High-Resolution Satellite) ===
+  const esriSatellite = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 22, attribution: "© Esri, Maxar, Earthstar Geographics" }
+    {
+      maxZoom: 22,
+      attribution: "© Esri, Maxar, Earthstar Geographics",
+    }
   ).addTo(map);
 
-  L.tileLayer(
+  // === ESRI Label Layer (shows street names, places, buildings) ===
+  const esriLabels = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 22, opacity: 1, attribution: "© Esri" }
+    {
+      maxZoom: 22,
+      opacity: 1,
+      attribution: "© Esri",
+    }
   ).addTo(map);
 
-  // Marker bookkeeping
+  // === Marker handling ===
   let markers = [];
+  let selectedMarker = null;
   const nameToMarker = new Map();
   const nameToData = new Map();
-  const selectedNames = new Set(); // multi-selected by parent
-  let pendingSelection = null;     // array of names received before markers exist
+  let pendingSelection = null;
 
-  function setMarkerDefaultStyle(marker) {
-    marker.setStyle({ color: "#ff0000", fillColor: "#ff0000", radius: 8 });
+  function resetMarkerStyle(marker) {
+    marker.setStyle({
+      color: "#ff0000",
+      fillColor: "#ff0000",
+      radius: 8,
+    });
   }
 
-  function setMarkerSelectedStyle(marker) {
-    marker.setStyle({ color: "#ffff00", fillColor: "#ffff00", radius: 11 });
+  function highlightMarker(marker) {
+    marker.setStyle({
+      color: "#ffff00",
+      fillColor: "#ffff00",
+      radius: 11,
+    });
   }
 
-  function buildInfoHtml(regionName, data) {
+  function clearSelection() {
+    if (selectedMarker) {
+      resetMarkerStyle(selectedMarker);
+      if (typeof selectedMarker.closePopup === 'function') {
+        selectedMarker.closePopup();
+      }
+      selectedMarker = null;
+    }
+  }
+
+  function buildPopupHtml(regionName, data) {
     const access = data?.access ?? "-";
     const satisfaction = data?.satisfaction ?? "-";
     return `<div>
@@ -84,61 +106,46 @@
     </div>`;
   }
 
-  function applySelectionVisuals() {
-    // Reset all
-    nameToMarker.forEach((marker) => {
-      setMarkerDefaultStyle(marker);
-      if (marker.isTooltipOpen && marker.isTooltipOpen()) {
-        marker.closeTooltip();
-      }
-    });
-
-    // Apply selected
-    selectedNames.forEach((name) => {
-      const marker = nameToMarker.get(name);
-      if (!marker) return;
-      setMarkerSelectedStyle(marker);
-      const data = nameToData.get(name);
-      const html = buildInfoHtml(name, data);
-      marker.bindTooltip(html, { permanent: true, direction: "top", className: "selected-tooltip" }).openTooltip();
-    });
-  }
-
-  function clearAllSelections() {
-    selectedNames.clear();
-    applySelectionVisuals();
-  }
-
-  function selectRegionsByNames(namesArray) {
-    if (!Array.isArray(namesArray) || namesArray.length === 0) {
-      clearAllSelections();
+  function highlightRegionByName(regionName, openPopup = true) {
+    if (!regionName) return;
+    const marker = nameToMarker.get(regionName);
+    if (!marker) {
+      pendingSelection = regionName; // defer until markers are ready
       return;
     }
-    selectedNames.clear();
-    namesArray.forEach((n) => {
-      if (typeof n === "string" && n.trim()) selectedNames.add(n.trim());
-    });
-    applySelectionVisuals();
+
+    if (selectedMarker && selectedMarker !== marker) {
+      resetMarkerStyle(selectedMarker);
+    }
+    highlightMarker(marker);
+    selectedMarker = marker;
+
+    if (openPopup) {
+      const data = nameToData.get(regionName);
+      marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: true });
+      marker.openPopup();
+    }
   }
 
+  // --- Receive data and selection from Grafana ---
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (!msg) return;
 
+    // Initial/updated dataset
     if (msg.type === "habData") {
-      // Rebuild markers
       markers.forEach((m) => map.removeLayer(m));
       markers = [];
       nameToMarker.clear();
       nameToData.clear();
-      clearAllSelections();
+      clearSelection();
       pendingSelection = null;
 
       const regionData = msg.data || [];
       if (!regionData.length) return;
 
       regionData.forEach((r) => {
-        const name = decodeURIComponent(r.name);
+        const regionNameDecoded = decodeURIComponent(r.name);
         const marker = L.circleMarker([r.lat, r.long], {
           radius: 8,
           color: "#ff0000",
@@ -147,14 +154,25 @@
           weight: 1.5,
         })
           .addTo(map)
-          .bindPopup(buildInfoHtml(name, r))
+          .bindPopup(buildPopupHtml(regionNameDecoded, r))
           .on("click", () => {
-            // Clicking a marker emits a single-region selection upstream
-            window.parent.postMessage({ type: "mapClick", region: name }, "*");
+            if (selectedMarker) {
+              resetMarkerStyle(selectedMarker);
+            }
+            highlightMarker(marker);
+            selectedMarker = marker;
+
+            window.parent.postMessage(
+              {
+                type: "mapClick",
+                region: regionNameDecoded, // plain text
+              },
+              "*"
+            );
           });
 
-        nameToMarker.set(name, marker);
-        nameToData.set(name, r);
+        nameToMarker.set(regionNameDecoded, marker);
+        nameToData.set(regionNameDecoded, r);
         markers.push(marker);
       });
 
@@ -163,30 +181,24 @@
         map.fitBounds(bounds, { padding: [40, 40] });
       }
 
+      // If a selection arrived earlier, apply now
       if (pendingSelection) {
-        const arr = pendingSelection;
+        const name = pendingSelection;
         pendingSelection = null;
-        selectRegionsByNames(arr);
+        highlightRegionByName(name, true);
       }
+
       return;
     }
 
-    if (msg.type === "selectRegions") {
-      // Expect msg.regions as array of names
-      if (!Array.isArray(msg.regions)) {
-        pendingSelection = [msg.regions].filter(Boolean);
-        return;
-      }
-      if (nameToMarker.size === 0) {
-        pendingSelection = msg.regions.slice();
-        return;
-      }
-      selectRegionsByNames(msg.regions);
+    // Programmatic selection from Grafana (e.g., dropdown)
+    if (msg.type === "selectRegion") {
+      highlightRegionByName(msg.region, true);
       return;
     }
 
     if (msg.type === "clearSelection") {
-      clearAllSelections();
+      clearSelection();
       return;
     }
   });
