@@ -38,7 +38,7 @@
   ).addTo(map);
   L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-    { maxZoom: 22, attribution: "© Esri" }
+    { maxZoom: 22, opacity: 1, attribution: "© Esri" }
   ).addTo(map);
 
   let markers = [];
@@ -71,7 +71,7 @@
       }
     });
   }
-  function clearAll() {
+  function clearAllSelections() {
     multiSelection.clear();
     updateAllVisuals();
   }
@@ -84,11 +84,12 @@
     const msg = event.data;
     if (!msg) return;
     if (msg.type === "habData") {
+      // ONLY here: remove and create marker layers
       markers.forEach(m => map.removeLayer(m));
       markers = [];
       nameToMarker.clear();
       nameToData.clear();
-      clearAll();
+      clearAllSelections();
       pendingMultiSelection = null;
       const regionData = msg.data || [];
       if (!regionData.length) return;
@@ -113,8 +114,8 @@
       if (pendingMultiSelection) selectRegions(pendingMultiSelection);
       return;
     }
+    // NEVER remove markers for selection/change
     if (msg.type === "selectRegions") {
-      // multi-select: expect msg.regions as array
       if (!Array.isArray(msg.regions)) {
         pendingMultiSelection = [msg.regions].filter(Boolean);
         return;
@@ -124,13 +125,12 @@
       return;
     }
     if (msg.type === "selectRegion") {
-      // single-select API for compatibility: mark only that point
       if (!msg.region || !nameToMarker.size) { pendingMultiSelection = [msg.region]; return; }
       selectRegions([msg.region]);
       return;
     }
     if (msg.type === "clearSelection") {
-      clearAll();
+      clearAllSelections();
       return;
     }
   });
