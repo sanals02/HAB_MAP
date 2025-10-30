@@ -10,16 +10,6 @@
   html, body { height: 100%; margin: 0; background: #000; font-family: "TheSansArabic", sans-serif; }
   #map { height: 100%; width: 100%; }
   .leaflet-popup-content { text-align: center; direction: rtl; font-size: 14px; }
-  .selected-tooltip {
-    background: rgba(0,0,0,0.85);
-    color: #fff;
-    border: 1px solid #ff0;
-    padding: 6px 8px;
-    border-radius: 4px;
-    text-align: center;
-    direction: rtl;
-    font-size: 13px;
-  }
 </style>
 </head>
 <body>
@@ -44,16 +34,17 @@
   let markers = [];
   const nameToMarker = new Map();
   const nameToData = new Map();
-  let multiSelection = new Set();
-  let pendingMultiSelection = null;
+  let selectedMarker = null;
+  let pendingSelection = null;
 
-  function styleDefault(marker) {
+  function resetMarkerStyle(marker) {
     marker.setStyle({ color: "#ff0000", fillColor: "#ff0000", radius: 8 });
-    if (marker._tooltip) marker.closeTooltip();
+    if (marker._popup) marker.closePopup();
   }
-  function styleSelected(marker, infoHtml) {
+  function highlightMarker(marker, infoHtml) {
     marker.setStyle({ color: "#ffff00", fillColor: "#ffff00", radius: 11 });
-    marker.bindTooltip(infoHtml, { permanent: true, direction: "top", className: "selected-tooltip" }).openTooltip();
+    marker.setPopupContent(infoHtml);
+    marker.openPopup();
   }
   function buildInfoHtml(name, data) {
     return `<div>
@@ -62,42 +53,48 @@
       رضا السكان: ${data?.satisfaction ?? "-"}
     </div>`;
   }
-  function updateAllVisuals() {
-    nameToMarker.forEach((marker, name) => {
-      if (multiSelection.has(name)) {
-        styleSelected(marker, buildInfoHtml(name, nameToData.get(name)));
-      } else {
-        styleDefault(marker);
-      }
-    });
+  function clearSelection() {
+    if (selectedMarker) {
+      resetMarkerStyle(selectedMarker);
+      selectedMarker = null;
+    }
   }
-  function clearAllSelections() {
-    multiSelection.clear();
-    updateAllVisuals();
-  }
-  function selectRegions(arr) {
-    multiSelection = new Set(arr.filter(Boolean).map(v => v.trim()));
-    updateAllVisuals();
+  function selectByName(regionName, openPopup = true) {
+    if (!regionName) return;
+    const marker = nameToMarker.get(regionName);
+    if (!marker) { pendingSelection = regionName; return; }
+    if (selectedMarker && selectedMarker !== marker) {
+      resetMarkerStyle(selectedMarker);
+    }
+    marker.setStyle({ color: "#ffff00", fillColor: "#ffff00", radius: 11 });
+    if (openPopup) {
+      const data = nameToData.get(regionName);
+      marker.setPopupContent(buildInfoHtml(regionName, data));
+      marker.openPopup();
+    }
+    selectedMarker = marker;
   }
 
   window.addEventListener("message", (event) => {
     const msg = event.data;
     if (!msg) return;
     if (msg.type === "habData") {
-      // ONLY here: remove and create marker layers
       markers.forEach(m => map.removeLayer(m));
       markers = [];
       nameToMarker.clear();
       nameToData.clear();
-      clearAllSelections();
-      pendingMultiSelection = null;
+      clearSelection();
+      pendingSelection = null;
+
       const regionData = msg.data || [];
       if (!regionData.length) return;
+
       regionData.forEach((r) => {
         const name = decodeURIComponent(r.name);
         const marker = L.circleMarker([r.lat, r.long], {
           radius: 8, color: "#ff0000", fillColor: "#ff0000", fillOpacity: 0.9, weight: 1.5,
-        }).addTo(map)
+        })
+        .addTo(map)
         .bindPopup(buildInfoHtml(name, r))
         .on("click", () => {
           window.parent.postMessage({ type: "mapClick", region: name }, "*");
@@ -106,31 +103,20 @@
         nameToData.set(name, r);
         markers.push(marker);
       });
+
       if (regionData.length > 1) {
         const bounds = L.latLngBounds(regionData.map((r) => [r.lat, r.long]));
         map.fitBounds(bounds, { padding: [40, 40] });
       }
-      // Handle deferred selection
-      if (pendingMultiSelection) selectRegions(pendingMultiSelection);
-      return;
-    }
-    // NEVER remove markers for selection/change
-    if (msg.type === "selectRegions") {
-      if (!Array.isArray(msg.regions)) {
-        pendingMultiSelection = [msg.regions].filter(Boolean);
-        return;
-      }
-      if (!nameToMarker.size) { pendingMultiSelection = msg.regions.slice(); return; }
-      selectRegions(msg.regions);
+      if (pendingSelection) selectByName(pendingSelection, true);
       return;
     }
     if (msg.type === "selectRegion") {
-      if (!msg.region || !nameToMarker.size) { pendingMultiSelection = [msg.region]; return; }
-      selectRegions([msg.region]);
+      selectByName(msg.region, true);
       return;
     }
     if (msg.type === "clearSelection") {
-      clearAllSelections();
+      clearSelection();
       return;
     }
   });
