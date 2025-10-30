@@ -174,11 +174,9 @@
     if (msg.type === "selectRegions") {
       // Expect msg.regions as array of names
       if (!Array.isArray(msg.regions)) {
-        // If markers not ready yet, defer
         pendingSelection = [msg.regions].filter(Boolean);
         return;
       }
-      // If markers not ready yet, store and apply after habData
       if (nameToMarker.size === 0) {
         pendingSelection = msg.regions.slice();
         return;
