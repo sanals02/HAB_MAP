@@ -86,6 +86,16 @@
     });
   }
 
+  function clearSelection() {
+    if (selectedMarker) {
+      resetMarkerStyle(selectedMarker);
+      if (typeof selectedMarker.closePopup === 'function') {
+        selectedMarker.closePopup();
+      }
+      selectedMarker = null;
+    }
+  }
+
   function buildPopupHtml(regionName, data) {
     const access = data?.access ?? "-";
     const satisfaction = data?.satisfaction ?? "-";
@@ -100,8 +110,7 @@
     if (!regionName) return;
     const marker = nameToMarker.get(regionName);
     if (!marker) {
-      // Defer until markers arrive
-      pendingSelection = regionName;
+      pendingSelection = regionName; // defer until markers are ready
       return;
     }
 
@@ -129,6 +138,8 @@
       markers = [];
       nameToMarker.clear();
       nameToData.clear();
+      clearSelection();
+      pendingSelection = null;
 
       const regionData = msg.data || [];
       if (!regionData.length) return;
@@ -182,8 +193,12 @@
 
     // Programmatic selection from Grafana (e.g., dropdown)
     if (msg.type === "selectRegion") {
-      // msg.region is expected to be plain text
       highlightRegionByName(msg.region, true);
+      return;
+    }
+
+    if (msg.type === "clearSelection") {
+      clearSelection();
       return;
     }
   });
