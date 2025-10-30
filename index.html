@@ -53,7 +53,7 @@
     }
   ).addTo(map);
 
-  // === ESRI Label Layer (shows street names, places, buildings) ===
+  // === ESRI Label Layer ===
   const esriLabels = L.tileLayer(
     "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
     {
@@ -65,10 +65,11 @@
 
   // === Marker handling ===
   let markers = [];
-  let selectedMarker = null;
   const nameToMarker = new Map();
   const nameToData = new Map();
   let pendingSelection = null;
+  let isShowingAll = true;
+  let selectedRegionNames = [];
 
   function resetMarkerStyle(marker) {
     marker.setStyle({
@@ -96,32 +97,31 @@
     </div>`;
   }
 
-  function highlightRegionByName(regionName, openPopup = true) {
-    if (!regionName) return;
-    const marker = nameToMarker.get(regionName);
-    if (!marker) {
-      // Defer until markers arrive
-      pendingSelection = regionName;
-      return;
-    }
-
-    if (selectedMarker && selectedMarker !== marker) {
-      resetMarkerStyle(selectedMarker);
-    }
-    highlightMarker(marker);
-    selectedMarker = marker;
-
-    if (openPopup) {
-      const data = nameToData.get(regionName);
-      marker.bindPopup(buildPopupHtml(regionName, data), { autoPan: true });
-      marker.openPopup();
-    }
+  // <CHANGE> Filter markers based on selection
+  function filterMarkers() {
+    markers.forEach((marker) => {
+      const regionName = marker.regionName;
+      
+      if (isShowingAll) {
+        // Show all markers in red
+        map.addLayer(marker);
+        resetMarkerStyle(marker);
+      } else {
+        // Show only selected markers in yellow
+        if (selectedRegionNames.includes(regionName)) {
+          map.addLayer(marker);
+          highlightMarker(marker);
+        } else {
+          map.removeLayer(marker);
+        }
+      }
+    });
   }
 
   // --- Receive data and selection from Grafana ---
   window.addEventListener("message", (event) => {
     const msg = event.data;
-    console.log("event data got",msg)
+    console.log("event data got", msg);
     if (!msg) return;
 
     // Initial/updated dataset
@@ -146,21 +146,17 @@
           .addTo(map)
           .bindPopup(buildPopupHtml(regionNameDecoded, r))
           .on("click", () => {
-            if (selectedMarker) {
-              resetMarkerStyle(selectedMarker);
-            }
-            highlightMarker(marker);
-            selectedMarker = marker;
-
+            // <CHANGE> Only show tooltip on click, don't change color
             window.parent.postMessage(
               {
                 type: "mapClick",
-                region: regionNameDecoded, // plain text
+                region: regionNameDecoded,
               },
               "*"
             );
           });
 
+        marker.regionName = regionNameDecoded;
         nameToMarker.set(regionNameDecoded, marker);
         nameToData.set(regionNameDecoded, r);
         markers.push(marker);
@@ -171,20 +167,21 @@
         map.fitBounds(bounds, { padding: [40, 40] });
       }
 
-      // If a selection arrived earlier, apply now
-      if (pendingSelection) {
-        const name = pendingSelection;
-        pendingSelection = null;
-        highlightRegionByName(name, true);
-      }
+      // Apply current filter
+      filterMarkers();
 
       return;
     }
 
-    // Programmatic selection from Grafana (e.g., dropdown)
+    // <CHANGE> Handle selection with filtering
     if (msg.type === "selectRegion") {
-      // msg.region is expected to be plain text
-      highlightRegionByName(msg.region, true);
+      isShowingAll = msg.isShowingAll || false;
+      selectedRegionNames = msg.regions || [];
+      
+      console.log("isShowingAll:", isShowingAll);
+      console.log("selectedRegionNames:", selectedRegionNames);
+      
+      filterMarkers();
       return;
     }
   });
