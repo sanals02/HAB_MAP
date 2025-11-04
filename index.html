@@ -28,6 +28,59 @@
       direction: rtl;
       font-size: 14px;
     }
+    
+    /* Custom tooltip styling */
+    .custom-tooltip {
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      border: 2px solid #ffff00;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+      direction: rtl;
+      text-align: right;
+      min-width: 200px;
+    }
+    
+    .custom-tooltip .region-name {
+      font-weight: bold;
+      font-size: 15px;
+      margin-bottom: 8px;
+      color: #ffff00;
+      border-bottom: 1px solid #ffff00;
+      padding-bottom: 6px;
+    }
+    
+    .custom-tooltip .stat-row {
+      margin: 6px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .custom-tooltip .stat-label {
+      color: #aaa;
+      font-size: 12px;
+    }
+    
+    .custom-tooltip .stat-value {
+      font-weight: bold;
+      font-size: 14px;
+      color: #4CAF50;
+    }
+    
+    /* Remove default Leaflet tooltip styling */
+    .leaflet-tooltip {
+      background: transparent !important;
+      border: none !important;
+      box-shadow: none !important;
+      padding: 0 !important;
+    }
+    
+    .leaflet-tooltip::before {
+      display: none !important;
+    }
 </style>
 </head>
  
@@ -37,15 +90,14 @@
   <script>
     // === Initialize map centered on Hafar Al-Batin ===
     const map = L.map("map", {
-      center: [28.4322, 45.9708], // 🏙️ City center
-      zoom: 13,                   // ⬅️ Zoomed out to see full city area
+      center: [28.4322, 45.9708],
+      zoom: 13,
       minZoom: 10,
-      maxZoom: 22,                // 🔍 High detail available
+      maxZoom: 22,
       zoomControl: true,
     });
  
     // === ESRI World Imagery (High-Resolution Satellite) ===
-   // === ESRI World Imagery (High-Resolution Satellite) ===
     const esriSatellite = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
       {
@@ -54,8 +106,8 @@
       }
     ).addTo(map);
  
-    // === ESRI Label Layer (shows street names, places, buildings) ===
-     const esriLabels = L.tileLayer(
+    // === ESRI Label Layer ===
+    const esriLabels = L.tileLayer(
       "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
       {
         maxZoom: 22,
@@ -67,6 +119,27 @@
     // === Marker handling ===
     let markers = [];
     let selectedMarker = null;
+    
+    // === Function to create custom tooltip content ===
+    function createTooltipContent(regionData) {
+      const name = decodeURIComponent(regionData.name);
+      const access = regionData.access != null ? regionData.access.toFixed(1) : 'N/A';
+      const satisfaction = regionData.satisfaction != null ? regionData.satisfaction.toFixed(1) : 'N/A';
+      
+      return `
+        <div class="custom-tooltip">
+          <div class="region-name">${name}</div>
+          <div class="stat-row">
+            <span class="stat-label">إمكانية الوصول:</span>
+            <span class="stat-value">${access}%</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">رضا السكان:</span>
+            <span class="stat-value">${satisfaction}%</span>
+          </div>
+        </div>
+      `;
+    }
  
     // --- Receive data from Grafana ---
     window.addEventListener("message", (event) => {
@@ -76,7 +149,8 @@
       markers = [];
  
       const regionData = event.data.data || [];
-     console.log("regionData got in the map",regionData)
+      console.log("regionData got in the map", regionData);
+      
       if (!regionData.length) return;
  
       regionData.forEach((r) => {
@@ -87,8 +161,54 @@
           fillOpacity: 0.9,
           weight: 1.5,
         })
-           .addTo(map)
-  .bindPopup(`<b>${decodeURIComponent(r.name)}</b>`) 
+          .addTo(map)
+          .bindPopup(`<b>${decodeURIComponent(r.name)}</b>`)
+          .bindTooltip(createTooltipContent(r), {
+            permanent: false,
+            direction: 'top',
+            offset: [0, -10],
+            opacity: 1,
+            className: 'custom-region-tooltip'
+          })
+          .on("mouseover", function(e) {
+            // Highlight on hover
+            if (marker !== selectedMarker) {
+              marker.setStyle({
+                color: "#ffaa00",
+                fillColor: "#ffaa00",
+                radius: 10,
+              });
+            }
+            
+            // Open tooltip
+            this.openTooltip();
+            
+            // Send hover event to Grafana
+            window.parent.postMessage(
+              {
+                type: "mapHover",
+                region: decodeURIComponent(r.name),
+                data: {
+                  access: r.access,
+                  satisfaction: r.satisfaction
+                }
+              },
+              "*"
+            );
+          })
+          .on("mouseout", function(e) {
+            // Reset style if not selected
+            if (marker !== selectedMarker) {
+              marker.setStyle({
+                color: "#ff0000",
+                fillColor: "#ff0000",
+                radius: 8,
+              });
+            }
+            
+            // Close tooltip
+            this.closeTooltip();
+          })
           .on("click", () => {
             // Reset previous
             if (selectedMarker) {
